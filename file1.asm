@@ -115,6 +115,9 @@ speed_unit_text: db 'km/h', 0
 ;----steering wheel:
 wheel_dy2: dw 0
 
+;===gear
+gear_text: db 'D', 0            ; change to 'R' later when reversing
+
 ; set_colour: BX = colour number, DH = red, CH = green, CL = blue (0..63)
 set_palette:
     mov si, palette_table
@@ -765,6 +768,33 @@ bld_done:
     pop ax
     ret
 
+drawGear:
+    push ax
+    push si
+
+    mov word [rect_x], 4        ; white border
+    mov word [rect_y], 180
+    mov word [rect_w], 16
+    mov word [rect_h], 16
+    mov byte [rect_c], 15
+    call drawRect
+
+    mov word [rect_x], 5        ; dark inside
+    mov word [rect_y], 181
+    mov word [rect_w], 14
+    mov word [rect_h], 14
+    mov byte [rect_c], 22
+    call drawRect
+
+    mov byte [text_row], 23     ; the letter D in green
+    mov byte [text_col], 1
+    mov byte [text_colour], 23
+    mov si, gear_text
+    call printString
+
+    pop si
+    pop ax
+    ret
 start:
     mov ax, 0013h
     int 10h
@@ -785,6 +815,7 @@ start:
     call drawFuel
     call drawSpeed
     call drawSteeringWheel
+    call drawGear
 
     mov ah, 0                   ; wait for a key
     int 16h
