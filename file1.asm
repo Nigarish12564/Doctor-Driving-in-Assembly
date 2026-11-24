@@ -36,7 +36,42 @@ palette_table:
      db 28, 52, 40, 28           ; building tan
     db 29, 30, 36, 50           ; building blue-grey
     db 30, 63, 58, 30           ; window yellow
+    db 27, 61, 40, 14           ; light orange   (already there)
+    db 28, 52, 40, 28           ; building tan   <- new
+    db 29, 30, 36, 50           ; building blue-grey   <- new
+    db 30, 63, 58, 30           ; window yellow  <- new
     db 0FFh
+
+    ; each line = x, y, width (every row is 1 pixel tall)
+left_arrow_rows:
+    dw 174, 178, 1
+    dw 172, 179, 3
+    dw 170, 180, 5
+    dw 172, 181, 3
+    dw 174, 182, 1
+    dw 175, 179, 3              ; stem
+    dw 175, 180, 3
+    dw 175, 181, 3
+    dw 0FFFFh
+
+right_arrow_rows:
+    dw 193, 178, 1
+    dw 193, 179, 3
+    dw 193, 180, 5
+    dw 193, 181, 3
+    dw 193, 182, 1
+    dw 190, 179, 3              ; stem
+    dw 190, 180, 3
+    dw 190, 181, 3
+    dw 0FFFFh
+
+hazard_rows:
+    dw 185, 177, 1
+    dw 184, 178, 3
+    dw 183, 179, 5
+    dw 182, 180, 7
+    dw 181, 181, 9
+    dw 0FFFFh
 
 building_table:
     dw 106, 62, 30,  36, 28     ; left side, far
@@ -121,6 +156,10 @@ gear_text: db 'D', 0            ; change to 'R' later when reversing
 ;--lane guide
 current_lane: db 1              ; 0 = left, 1 = middle, 2 = right
 arrow_x: dw 0                   ; centre x of the arrow being drawn
+
+;---indicator---
+indicator_left:  db 0           ; 1 = left arrow lit
+indicator_right: db 0           ; 1 = right arrow lit
 
 
 ; set_colour: BX = colour number, DH = red, CH = green, CL = blue (0..63)
@@ -865,6 +904,56 @@ head_loop:
     pop bx
     pop ax
     ret
+
+    ; drawRows: SI = table, rect_c = colour
+drawRows:
+    push ax
+    push si
+    mov word [rect_h], 1
+rows_next:
+    cmp word [si], 0FFFFh
+    je rows_done
+    mov ax, [si]
+    mov [rect_x], ax
+    mov ax, [si+2]
+    mov [rect_y], ax
+    mov ax, [si+4]
+    mov [rect_w], ax
+    call drawRect
+    add si, 6                   ; next line of the table
+    jmp rows_next
+rows_done:
+    pop si
+    pop ax
+    ret
+
+drawIndicators:
+    push ax
+    push si
+
+    mov byte [rect_c], 8        ; dark grey = off
+    cmp byte [indicator_left], 0
+    je left_is_off
+    mov byte [rect_c], 23       ; green = on
+left_is_off:
+    mov si, left_arrow_rows
+    call drawRows
+
+    mov byte [rect_c], 8
+    cmp byte [indicator_right], 0
+    je right_is_off
+    mov byte [rect_c], 23
+right_is_off:
+    mov si, right_arrow_rows
+    call drawRows
+
+    mov byte [rect_c], 4        ; red hazard triangle
+    mov si, hazard_rows
+    call drawRows
+
+    pop si
+    pop ax
+    ret
 start:
     mov ax, 0013h
     int 10h
@@ -887,6 +976,7 @@ start:
     call drawSteeringWheel
     call drawGear
     call drawLaneArrows
+     call drawIndicators
 
     mov ah, 0                   ; wait for a key
     int 16h
