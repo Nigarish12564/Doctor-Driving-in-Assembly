@@ -91,6 +91,16 @@ score_text: db 'SCORE  4793', 0
 score_row: db 2
 score_col: db 5
 
+; ---- fuel bar ----
+fuel_text: db 'FUEL', 0
+fuel_empty_text: db 'E', 0
+fuel_full_text: db 'F', 0
+
+; ---- speed display ----
+speed_text: db '078', 0
+speed_unit_text: db 'km/h', 0
+;----steering wheel:
+wheel_dy2: dw 0
 
 ; set_colour: BX = colour number, DH = red, CH = green, CL = blue (0..63)
 set_palette:
@@ -523,6 +533,165 @@ drawScore:
     ret
 
 
+drawFuel:
+    push ax
+    push si
+
+    ; Print FUEL label
+    mov byte [text_row], 22
+    mov byte [text_col], 25
+    mov byte [text_colour], 15
+    mov si, fuel_text
+    call printString
+
+    ; Draw the outer white border
+    mov word [rect_x], 204
+    mov word [rect_y], 184
+    mov word [rect_w], 42
+    mov word [rect_h], 8
+    mov byte [rect_c], 15
+    call drawRect
+
+    ; Thin white border: dark inner area
+    mov word [rect_x], 205
+    mov word [rect_y], 185
+    mov word [rect_w], 40
+    mov word [rect_h], 6
+    mov byte [rect_c], 22
+    call drawRect
+
+    ; Half-full green fuel
+    mov word [rect_x], 205
+    mov word [rect_y], 185
+    mov word [rect_w], 20
+    mov word [rect_h], 6
+    mov byte [rect_c], 23
+    call drawRect
+
+    ; Print E below the bar
+    mov byte [text_row], 24
+    mov byte [text_col], 25
+    mov byte [text_colour], 15
+    mov si, fuel_empty_text
+    call printString
+
+    ; Print F below the bar
+    mov byte [text_row], 24
+    mov byte [text_col], 30
+    mov byte [text_colour], 15
+    mov si, fuel_full_text
+    call printString
+
+    pop si
+    pop ax
+    ret
+
+
+drawSpeed:
+    push ax
+    push si
+
+    ; Draw the outer white border
+    mov word [rect_x], 104
+    mov word [rect_y], 176
+    mov word [rect_w], 64
+    mov word [rect_h], 22
+    mov byte [rect_c], 15
+    call drawRect
+
+    ; Draw the dark inner box
+    mov word [rect_x], 105
+    mov word [rect_y], 177
+    mov word [rect_w], 62
+    mov word [rect_h], 20
+    mov byte [rect_c], 22
+    call drawRect
+
+    ; Print the speed in gold
+    mov byte [text_row], 22
+    mov byte [text_col], 15
+    mov byte [text_colour], 26
+    mov si, speed_text
+    call printString
+
+    ; Print km/h below the speed
+    mov byte [text_row], 23
+    mov byte [text_col], 15
+    mov byte [text_colour], 15
+    mov si, speed_unit_text
+    call printString
+
+    pop si
+    pop ax
+    ret
+
+
+
+
+
+drawSteeringWheel:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+
+    mov si, 137                 ; y = top row of the wheel
+w_row:
+    mov ax, si
+    sub ax, 180                 ; centre y = 180
+    imul ax
+    mov [wheel_dy2], ax         ; dy squared
+
+    mov cx, 257                 ; x = left side of the wheel
+w_col:
+    mov ax, cx
+    sub ax, 300                 ; centre x = 300
+    imul ax
+    add ax, [wheel_dy2]         ; AX = distance squared from centre
+
+    mov bl, 0                   ; default colour: black
+    cmp ax, 1849                ; outside the wheel (43 squared)?
+    ja w_next
+    cmp ax, 144                 ; inside the hub (12 squared)?
+    jbe w_hub
+    cmp word [wheel_dy2], 9     ; spoke rows
+    jbe w_draw
+    cmp ax, 1225                ; inside the hole (35 squared)?
+    jb w_next
+    jmp w_draw
+w_hub:
+    mov bl, 7                   ; grey hub
+
+w_draw:
+    push ax
+    mov ax, si
+    mov dx, 320
+    mul dx
+    add ax, cx
+    mov di, ax
+    mov [es:di], bl             ; put the pixel
+    pop ax
+
+w_next:
+    inc cx
+    cmp cx, 320
+    jb w_col
+
+    inc si
+    cmp si, 200
+    jb w_row
+
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+
 start:
     mov ax, 0013h
     int 10h
@@ -539,6 +708,9 @@ start:
     call drawTime
     call drawDistance
     call drawScore
+    call drawFuel
+    call drawSpeed
+    call drawSteeringWheel
 
     mov ah, 0                   ; wait for a key
     int 16h
