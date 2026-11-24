@@ -1,0 +1,7 @@
+# Executable files
+*.com
+*.exe
+*.out
+
+# NASM assembler executable
+nasm
