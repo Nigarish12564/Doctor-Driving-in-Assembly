@@ -118,6 +118,11 @@ wheel_dy2: dw 0
 ;===gear
 gear_text: db 'D', 0            ; change to 'R' later when reversing
 
+;--lane guide
+current_lane: db 1              ; 0 = left, 1 = middle, 2 = right
+arrow_x: dw 0                   ; centre x of the arrow being drawn
+
+
 ; set_colour: BX = colour number, DH = red, CH = green, CL = blue (0..63)
 set_palette:
     mov si, palette_table
@@ -795,6 +800,71 @@ drawGear:
     pop si
     pop ax
     ret
+
+drawLaneArrows:
+    push ax
+    push bx
+    push cx
+    push dx
+
+    mov word [rect_x], 210      ; orange border of the panel
+    mov word [rect_y], 4
+    mov word [rect_w], 30
+    mov word [rect_h], 24
+    mov byte [rect_c], 19
+    call drawRect
+
+    mov word [rect_x], 211      ; dark inside
+    mov word [rect_y], 5
+    mov word [rect_w], 28
+    mov word [rect_h], 22
+    mov byte [rect_c], 22
+    call drawRect
+
+    mov bx, 0                   ; lane number: 0, 1, 2
+arrow_next:
+    mov ax, bx
+    mov dl, 9
+    mul dl                      ; AX = lane * 9
+    add ax, 215
+    mov [arrow_x], ax           ; centre x of this arrow
+
+    mov byte [rect_c], 7        ; grey arrow
+    cmp bl, [current_lane]
+    jne arrow_colour_ok
+    mov byte [rect_c], 26       ; gold arrow = the lane the car is in
+arrow_colour_ok:
+
+    mov cx, 4                   ; the arrow head has 4 rows
+    mov word [rect_y], 7
+    mov word [rect_w], 1
+    mov word [rect_h], 1
+    mov dx, [arrow_x]
+head_loop:
+    mov [rect_x], dx
+    call drawRect
+    dec dx                      ; next row starts 1 pixel more left
+    add word [rect_w], 2        ; and is 2 pixels wider
+    inc word [rect_y]           ; and 1 row lower
+    loop head_loop
+
+    mov ax, [arrow_x]           ; the arrow stem
+    dec ax
+    mov [rect_x], ax
+    mov word [rect_y], 11
+    mov word [rect_w], 3
+    mov word [rect_h], 10
+    call drawRect
+
+    inc bx                      ; next lane
+    cmp bx, 3
+    jb arrow_next
+
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
 start:
     mov ax, 0013h
     int 10h
@@ -816,6 +886,7 @@ start:
     call drawSpeed
     call drawSteeringWheel
     call drawGear
+    call drawLaneArrows
 
     mov ah, 0                   ; wait for a key
     int 16h
