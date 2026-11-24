@@ -33,8 +33,21 @@ palette_table:
     db 25,  8, 40, 37           ; car teal
     db 26, 63, 50, 10           ; gold
     db 27, 61, 40, 14           ; light orange
+     db 28, 52, 40, 28           ; building tan
+    db 29, 30, 36, 50           ; building blue-grey
+    db 30, 63, 58, 30           ; window yellow
     db 0FFh
 
+building_table:
+    dw 106, 62, 30,  36, 28     ; left side, far
+    dw  70, 48, 36,  64, 29
+    dw  20, 30, 50, 100, 28
+    dw   0, 30, 20, 120, 29
+    dw 184, 62, 30,  36, 29     ; right side, far
+    dw 214, 48, 36,  64, 28
+    dw 250, 30, 50, 100, 29
+    dw 300, 30, 20, 120, 28
+    dw 0FFFFh                   ; end of the list
 
 
 ; ---- shared by the rectangle routine ----
@@ -691,6 +704,66 @@ w_next:
     pop ax
     ret
 
+drawBuildings:
+    push ax
+    push bx
+    push dx
+    push si
+
+    mov si, building_table
+bld_next:
+    cmp word [si], 0FFFFh
+    jne bld_draw
+    jmp bld_done
+bld_draw:
+    mov ax, [si]                ; building body
+    mov [rect_x], ax
+    mov ax, [si+2]
+    mov [rect_y], ax
+    mov ax, [si+4]
+    mov [rect_w], ax
+    mov ax, [si+6]
+    mov [rect_h], ax
+    mov ax, [si+8]
+    mov [rect_c], al
+    call drawRect
+
+    mov word [rect_w], 4        ; windows: 4 x 6 pixels
+    mov word [rect_h], 6
+    mov byte [rect_c], 30
+    mov dx, [si+2]
+    add dx, 6                   ; DX = y of the first window row
+bld_win_row:
+    mov ax, [si+2]
+    add ax, [si+6]
+    sub ax, 12                  ; stop before the bottom of the building
+    cmp dx, ax
+    jae bld_win_done
+    mov [rect_y], dx
+    mov bx, [si]
+    add bx, 5                   ; BX = x of the first window
+bld_win_col:
+    mov ax, [si]
+    add ax, [si+4]
+    sub ax, 9                   ; stop before the right side
+    cmp bx, ax
+    ja bld_next_row
+    mov [rect_x], bx
+    call drawRect
+    add bx, 10                  ; next window to the right
+    jmp bld_win_col
+bld_next_row:
+    add dx, 14                  ; next row of windows
+    jmp bld_win_row
+bld_win_done:
+    add si, 10                  ; next building (5 words)
+    jmp bld_next
+bld_done:
+    pop si
+    pop dx
+    pop bx
+    pop ax
+    ret
 
 start:
     mov ax, 0013h
@@ -702,6 +775,7 @@ start:
 
     call drawSky
     call drawGrass
+     call drawBuildings          ; new
     call drawRoad
     call drawTraffic            ; cars go after the road, before the bonnet
     call drawCar                ; bonnet + dashboard
