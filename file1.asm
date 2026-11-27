@@ -15,7 +15,7 @@ CAR_START_Y    equ 90           ; row where a new car appears (horizon is 88)
 CAR_GONE_Y     equ 150          ; row where a car has passed the player
 HIT_Y          equ 146          ; car bottom at this row = touching the bonnet
 PATTERN_LEN    equ 12           ; entries in lane_pattern
-
+road_shift: dw 0                ; sideways shift of the road on the current row
 sky_blue: db 16, 33, 51, 59
 grass_green: db 17, 30, 42, 25
 road_grey: db 18, 22, 22, 25
@@ -243,6 +243,24 @@ drawRoad:
     mov dx, 80                  ; rows 88 to 167
     mov al, [road_grey]
 road_row:
+    push ax                     ; work out the shift for this row
+    push bx
+    push dx
+    mov ax, cx
+    xor dx, dx
+    mov bx, 3
+    div bx                      ; AX = lane spacing on this row (width / 3)
+    mov bl, [current_lane]
+    xor bh, bh
+    neg bx
+    inc bx                      ; BX = 1 - lane  (+1, 0 or -1)
+    imul bx                     ; AX = spacing * (1 - lane)
+    mov [road_shift], ax
+    pop dx
+    pop bx
+    pop ax
+    add di, [road_shift]        ; slide this row sideways
+
     push cx                     ; save the width (rep stosb makes CX = 0)
     push di                     ; save where this row started
     rep stosb                   ; draw one row of grey
@@ -279,6 +297,7 @@ road_row:
     mov byte [es:bx-1], 15      ; left lane line, 2 white pixels
     mov byte [es:bx-2], 15
 skip_dashes:
+    sub di, [road_shift]        ; undo the shift before moving to the next row
     add di, 319                 ; one row down (+320) and one pixel left (-1)
     add cx, 2                   ; 1 pixel wider on each side
     dec dx
