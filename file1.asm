@@ -1145,30 +1145,69 @@ ntt_loop:
     ret
 
 
-; respawnCar: BX = car number. Puts it back at the far end of the road
-; in the next lane of the repeating pattern.
 respawnCar:
     push ax
+    push cx
+    push dx
     push si
+    push di
     mov si, bx
     shl si, 1
     mov word [car_posy+si], CAR_START_Y
-    mov al, [lane_idx]
+
+    mov al, [lane_idx]          ; take the next lane from the pattern
     mov ah, 0
     mov si, ax
-    mov al, [lane_pattern+si]
-    mov [car_lane+bx], al
-    mov al, [lane_idx]
+    mov ch, [lane_pattern+si]   ; CH = proposed lane
     inc al
     cmp al, PATTERN_LEN
-    jb rc_store
+    jb rc_idx
     mov al, 0
-rc_store:
+rc_idx:
     mov [lane_idx], al
+
+    mov cl, 0                   ; CL = how many other cars are still far away
+    mov dx, 0FFFFh              ; DL, DH = lanes of those cars
+    mov di, 0
+rc_scan:
+    cmp di, bx
+    je rc_skip                  ; ignore the car being respawned
+    mov si, di
+    shl si, 1
+    cmp word [car_posy+si], 125
+    jae rc_skip                 ; already close to the player
+    mov ah, [car_lane+di]
+    cmp cl, 0
+    jne rc_second
+    mov dl, ah
+    jmp rc_count
+rc_second:
+    mov dh, ah
+rc_count:
+    inc cl
+rc_skip:
+    inc di
+    cmp di, 3
+    jb rc_scan
+
+    cmp cl, 2                   ; would all three lanes be blocked?
+    jne rc_store
+    cmp dl, dh
+    je rc_store
+    cmp dl, ch
+    je rc_store
+    cmp dh, ch
+    je rc_store
+    mov ch, dl                  ; yes: share a lane so one lane stays free
+rc_store:
+    mov [car_lane+bx], ch
+
+    pop di
     pop si
+    pop dx
+    pop cx
     pop ax
     ret
-
 
 ; moveTraffic: every car comes closer. Near cars move faster (perspective)
 ; and the player's speed makes them come faster still.
