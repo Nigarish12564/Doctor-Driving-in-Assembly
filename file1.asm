@@ -6,7 +6,7 @@ BUF_SEG        equ 5000h        ; hidden screen buffer (segment), copied to A000
 TIME_DIV       equ 11           ; ticks per pixel of the time bar
 TIME_TOTAL     equ 1276         ; 116 pixels * 11 ticks = about 70 seconds
 FUEL_MAX       equ 40           ; width of the fuel bar in pixels
-FUEL_DIV       equ 2000         ; speed units that use up 1 pixel of fuel
+FUEL_DIV       equ 3000      ; speed units that use up 1 pixel of fuel
 FUEL_IDLE      equ 30           ; fuel use per tick even when stopped
 FUEL_LOW       equ 8            ; bar turns red at or below this
 GOAL_M         equ 1000         ; level length in metres
@@ -238,8 +238,8 @@ drawRoad:
     push si
     push di
 
-    mov di, 28306               ; row 88, x = 146  (88 * 320 + 146)
-    mov cx, 28                  ; width of the first row
+     mov di, 28290               ; row 88, x = 130  (88 * 320 + 130)
+    mov cx, 60                  ; width of the first row (was 28)
     mov dx, 80                  ; rows 88 to 167
     mov al, [road_grey]
 road_row:
@@ -1276,7 +1276,7 @@ pc_next:
     shl ax, 1
     add ax, dx
     shr ax, 1                   ; AX = 1.5 * y
-    sub ax, 104                 ; AX = road width on this row (1.5y - 104)
+    sub ax, 72                  ; AX = road width on this row (1.5y - 72)
     mov cx, ax                  ; CX = road width
     xor dx, dx
     mov si, 5
