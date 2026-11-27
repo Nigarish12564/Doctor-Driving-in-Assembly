@@ -298,8 +298,14 @@ road_row:
     mov byte [es:bx-2], 15
 skip_dashes:
     sub di, [road_shift]        ; undo the shift before moving to the next row
-    add di, 319                 ; one row down (+320) and one pixel left (-1)
-    add cx, 2                   ; 1 pixel wider on each side
+    test dl, 1
+    jz road_flat
+    add di, 319                 ; every second row: one pixel left
+    add cx, 2                   ; and 1 pixel wider on each side
+    jmp road_next
+road_flat:
+    add di, 320                 ; other rows: straight down, same width
+road_next:
     dec dx
     jnz road_row
 
@@ -1266,8 +1272,7 @@ pc_next:
     mov di, [car_ptr+si]        ; DI -> x, y, w, h of this car
     mov ax, [car_posy+si]
     mov [di+2], ax              ; y
-    shl ax, 1
-    sub ax, 148                 ; AX = road width on this row (2y - 148)
+    sub ax, 60                  ; AX = road width on this row (y - 60)
     mov cx, ax                  ; CX = road width
     xor dx, dx
     mov si, 5
