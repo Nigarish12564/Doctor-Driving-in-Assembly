@@ -1610,12 +1610,21 @@ fk_done:
 
 
 ; ----------------------------------------------------------------------
-; handleInput - PLACEHOLDER so the program runs. Partner A: replace this
-; with your real keyboard / acceleration / braking / lane code.
-; It only has to change [speed] and [current_lane].
+; handleInput - Partner A: keyboard, acceleration, braking, lane switching
+; Changes [speed], [current_lane] and the indicator flags.
 ; ----------------------------------------------------------------------
+indicator_timer: db 0           ; ticks left before the indicator turns off
+
 handleInput:
     push ax
+
+    cmp byte [indicator_timer], 0   ; count the indicator down once per tick
+    je hi_next
+    dec byte [indicator_timer]
+    jnz hi_next
+    mov byte [indicator_left], 0
+    mov byte [indicator_right], 0
+
 hi_next:
     mov ah, 1
     int 16h
@@ -1628,6 +1637,7 @@ hi_key:
     jne hi_up
     mov byte [game_state], 4
     jmp hi_done
+
 hi_up:
     cmp ah, 48h                 ; Up Arrow
     jne hi_space
@@ -1636,27 +1646,39 @@ hi_up:
     jbe hi_next
     mov word [speed], 120
     jmp hi_next
+
 hi_space:
     cmp ah, 39h                 ; Space
     jne hi_left
+    cmp word [speed], 8
+    jae hi_brake
+    mov word [speed], 8         ; so it never goes below 0
+hi_brake:
     sub word [speed], 8
-    jnc hi_next
-    mov word [speed], 0
     jmp hi_next
+
 hi_left:
     cmp ah, 4Bh                 ; Left Arrow
     jne hi_right
-    cmp byte [current_lane], 0
+    cmp byte [current_lane], 0  ; edge lane: do nothing
     je hi_next
     dec byte [current_lane]
+    mov byte [indicator_left], 1
+    mov byte [indicator_right], 0
+    mov byte [indicator_timer], 15
     jmp hi_next
+
 hi_right:
     cmp ah, 4Dh                 ; Right Arrow
     jne hi_next
     cmp byte [current_lane], 2
     jae hi_next
     inc byte [current_lane]
+    mov byte [indicator_right], 1
+    mov byte [indicator_left], 0
+    mov byte [indicator_timer], 15
     jmp hi_next
+
 hi_done:
     pop ax
     ret
