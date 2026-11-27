@@ -35,6 +35,7 @@ time_bar_empty_colour: db 22
 time_text_colour: db 15
 text_colour: db 0
 
+
 palette_table:
     db 16, 33, 51, 59           ; sky blue
     db 17, 30, 42, 25           ; grass green
@@ -1711,6 +1712,7 @@ hi_key:
 hi_up:
     cmp ah, 48h                 ; Up Arrow
     jne hi_space
+    mov byte [gear_text], 'D'   ; driving forward again
     add word [speed], 4
     cmp word [speed], 120
     jbe hi_next
@@ -1740,13 +1742,21 @@ hi_left:
 
 hi_right:
     cmp ah, 4Dh                 ; Right Arrow
-    jne hi_next
+    jne hi_down
     cmp byte [current_lane], 2
     jae hi_next
     inc byte [current_lane]
     mov byte [indicator_right], 1
     mov byte [indicator_left], 0
     mov byte [indicator_timer], 15
+    jmp hi_next
+
+hi_down:
+    cmp ah, 50h                 ; Down Arrow
+    jne hi_next
+    cmp word [speed], 0         ; reverse only when stopped
+    jne hi_next                 ; moving: ignore it, Down never brakes
+    mov byte [gear_text], 'R'
     jmp hi_next
 
 hi_done:
