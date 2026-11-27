@@ -13,7 +13,7 @@ GOAL_M         equ 1000         ; level length in metres
 CRASH_PENALTY  equ 50           ; points lost per collision
 CAR_START_Y    equ 90           ; row where a new car appears (horizon is 88)
 CAR_GONE_Y     equ 150          ; row where a car has passed the player
-HIT_Y          equ 146          ; car bottom at this row = touching the bonnet
+HIT_Y          equ 150          ; car bottom at this row = touching the bonnet
 PATTERN_LEN    equ 12           ; entries in lane_pattern
 road_shift: dw 0                ; sideways shift of the road on the current row
 sky_blue: db 16, 33, 51, 59
@@ -298,7 +298,7 @@ road_row:
     mov byte [es:bx-2], 15
 skip_dashes:
     sub di, [road_shift]        ; undo the shift before moving to the next row
-    test dl, 1
+    test dl, 3                  ; 3 rows out of 4 grow, 1 stays flat
     jz road_flat
     add di, 319                 ; every second row: one pixel left
     add cx, 2                   ; and 1 pixel wider on each side
@@ -355,9 +355,9 @@ car_left_side:
     mov ax, dx
 car_have_u:
     mul ax                      ; AX = u * u
-    mov si, 1113
-    div si                      ; AX = u * u / 1113
-    add ax, 144                 ; AX = top row of this column
+    mov si, 1700
+    div si                      ; AX = u * u / 1700
+    add ax, 152                 ; AX = top row of this column
     mov cx, 168
     sub cx, ax                  ; CX = height of this column
     mov dx, 320
@@ -1272,7 +1272,11 @@ pc_next:
     mov di, [car_ptr+si]        ; DI -> x, y, w, h of this car
     mov ax, [car_posy+si]
     mov [di+2], ax              ; y
-    sub ax, 60                  ; AX = road width on this row (y - 60)
+    mov dx, ax
+    shl ax, 1
+    add ax, dx
+    shr ax, 1                   ; AX = 1.5 * y
+    sub ax, 104                 ; AX = road width on this row (1.5y - 104)
     mov cx, ax                  ; CX = road width
     xor dx, dx
     mov si, 5
