@@ -1227,14 +1227,17 @@ pc_next:
     div si                      ; AX = distance from the road centre to a side lane
     mov dx, [di+4]
     shr dx, 1                   ; DX = half the car width
-    mov cx, 160                 ; middle lane
-    cmp byte [car_lane+bx], 1
-    je pc_set
-    jb pc_left
-    add cx, ax                  ; right lane
-    jmp pc_set
-pc_left:
-    sub cx, ax                  ; left lane
+     mov cx, 160                 ; centre of the screen = the player's lane
+    push ax
+    mov al, [car_lane+bx]
+    sub al, [current_lane]      ; -2..+2 lanes away from the player
+    cbw
+    mov si, ax
+    pop ax                      ; AX = lane distance in pixels
+    push dx
+    imul si                     ; AX = distance * lanes away
+    pop dx                      ; DX = half the car width again
+    add cx, ax
 pc_set:
     sub cx, dx
     mov [di], cx                ; x
