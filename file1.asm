@@ -1,6 +1,21 @@
 [org 0x0100]
 jmp start
 
+; ---- Phase 2 constants (Partner B) ----
+BUF_SEG        equ 5000h        ; hidden screen buffer (segment), copied to A000h each frame
+TIME_DIV       equ 11           ; ticks per pixel of the time bar
+TIME_TOTAL     equ 1276         ; 116 pixels * 11 ticks = about 70 seconds
+FUEL_MAX       equ 40           ; width of the fuel bar in pixels
+FUEL_DIV       equ 2000         ; speed units that use up 1 pixel of fuel
+FUEL_IDLE      equ 30           ; fuel use per tick even when stopped
+FUEL_LOW       equ 8            ; bar turns red at or below this
+GOAL_M         equ 1000         ; level length in metres
+CRASH_PENALTY  equ 50           ; points lost per collision
+CAR_START_Y    equ 90           ; row where a new car appears (horizon is 88)
+CAR_GONE_Y     equ 150          ; row where a car has passed the player
+HIT_Y          equ 146          ; car bottom at this row = touching the bonnet
+PATTERN_LEN    equ 12           ; entries in lane_pattern
+
 sky_blue: db 16, 33, 51, 59
 grass_green: db 17, 30, 42, 25
 road_grey: db 18, 22, 22, 25
@@ -19,8 +34,6 @@ time_left_colour: db 21
 time_bar_empty_colour: db 22
 time_text_colour: db 15
 text_colour: db 0
-speed: db 0                     ; 0 to 120
-MAX_SPEED equ 120
 
 palette_table:
     db 16, 33, 51, 59           ; sky blue
@@ -132,12 +145,12 @@ time_left_y: dw 80
 time_left_h: dw 62
 
 ; ---- distance ----
-distance_text: db 'DIST  420 / 1000 m', 0
+distance_text: db 'DIST 0000 / 1000 m', 0
 distance_row: db 1
 distance_col: db 5
 
 ; ---- score ----
-score_text: db 'SCORE  4793', 0
+score_text: db 'SCORE  0000', 0
 score_row: db 2
 score_col: db 5
 
@@ -243,7 +256,11 @@ road_row:
     mov byte [es:bx-1], 15      ; right edge, 2 white pixels
     mov byte [es:bx-2], 15
 
-    test dl, 8                  ; dashes: 8 rows on, 8 rows off
+    push ax
+    mov al, dl
+    add al, [road_scroll]       ; dashes slide down the road
+    test al, 8                  ; dashes: 8 rows on, 8 rows off
+    pop ax
     jz skip_dashes
     push ax                     ; keep the grey colour in AL safe
     mov ax, cx
@@ -360,6 +377,8 @@ drawRect:
     add ax, [rect_x]
     mov bx, ax                  ; BX = start of the current row
     mov dx, [rect_h]            ; DX = rows left to draw
+    test dx, dx
+    jz rect_done                ; height 0 = draw nothing
     mov al, [rect_c]
 rect_row:
     mov di, bx
@@ -368,6 +387,7 @@ rect_row:
     add bx, 320                 ; next row
     dec dx
     jnz rect_row
+rect_done:
 
     pop di
     pop dx
@@ -622,12 +642,18 @@ drawFuel:
     mov byte [rect_c], 22
     call drawRect
 
-    ; Half-full green fuel
+    ; Fuel left: width = fuel_level, red when low
     mov word [rect_x], 205
     mov word [rect_y], 185
-    mov word [rect_w], 20
+    mov al, [fuel_level]
+    mov ah, 0
+    mov [rect_w], ax
     mov word [rect_h], 6
     mov byte [rect_c], 23
+    cmp al, FUEL_LOW
+    ja fuel_colour_ok
+    mov byte [rect_c], 21       ; low fuel = red
+fuel_colour_ok:
     call drawRect
 
     ; Print E below the bar
@@ -674,14 +700,14 @@ drawSpeed:
     mov byte [text_col], 15
     mov byte [text_colour], 26
     mov si, speed_text
-    call printString
+    call printStringT
 
     ; Print km/h below the speed
     mov byte [text_row], 23
     mov byte [text_col], 15
     mov byte [text_colour], 15
     mov si, speed_unit_text
-    call printString
+    call printStringT
 
     pop si
     pop ax
@@ -836,7 +862,7 @@ drawGear:
     mov byte [text_col], 1
     mov byte [text_colour], 23
     mov si, gear_text
-    call printString
+    call printStringT
 
     pop si
     pop ax
@@ -1039,93 +1065,626 @@ tt_done:
     pop ax
     ret
 
-    updateSpeedText:
+
+; ======================================================================
+;  PHASE 2 - PARTNER B
+;  moving traffic, collisions, time / fuel, distance / score, end of level
+; ======================================================================
+
+; ---- state shared with Partner A ----
+speed:          dw 0            ; km/h, 0..120. Partner A changes it, Partner B reads it
+game_state:     db 0            ; 0 playing, 1 level complete, 2 time up, 3 out of fuel, 4 quit
+
+; ---- Partner B state ----
+distance_m:     dw 0            ; metres driven (0..1000)
+dist_frac:      dw 0            ; leftover speed that has not made a whole metre yet
+score_val:      dw 0
+time_ticks:     dw TIME_TOTAL   ; game ticks left (18.2 per second)
+fuel_level:     db FUEL_MAX     ; 0..40 = width of the green bar in pixels
+fuel_acc:      dw 0
+crash_timer:    db 0            ; ticks the CRASH message stays on screen
+road_scroll:    db 0            ; moves the white road dashes
+lane_idx:       db 0            ; next entry of lane_pattern
+last_tick:      dw 0
+
+; ---- traffic: three cars, same order as the structs (blue, teal, gold) ----
+car_lane:       db 0, 2, 1                  ; lane of each car (0 left, 1 middle, 2 right)
+car_posy:       dw 118, 104, 96             ; top row of each car
+car_ptr:        dw blue_car_x, teal_car_x, gold_car_x   ; each struct = x, y, w, h
+lane_pattern:   db 1,0,2,2,0,1,2,1,0,0,2,1  ; repeating pattern for new cars
+
+crash_text:     db 'CRASH! -50', 0
+msg_win:        db 'LEVEL COMPLETE!', 0
+msg_time:       db '  TIME IS UP!  ', 0
+msg_fuel:       db ' OUT OF FUEL!  ', 0
+msg_key:        db 'PRESS ANY KEY', 0
+
+
+; numToText: AX = number, DI = first digit in memory, CX = number of digits
+; (leading zeros). Writes ASCII digits from the right.
+numToText:
     push ax
     push bx
-    mov al, [speed]
-    mov ah, 0
-    mov bl, 100
-    div bl                      ; AL = hundreds, AH = remainder
-    add al, '0'
-    mov [speed_text], al
-    mov al, ah
-    mov ah, 0
-    mov bl, 10
-    div bl                      ; AL = tens, AH = ones
-    add al, '0'
-    mov [speed_text+1], al
-    add ah, '0'
-    mov [speed_text+2], ah
+    push cx
+    push dx
+    push di
+    add di, cx
+    dec di                      ; DI = last digit
+    mov bx, 10
+ntt_loop:
+    xor dx, dx
+    div bx                      ; AX = AX / 10, DX = digit
+    add dl, '0'
+    mov [di], dl
+    dec di
+    loop ntt_loop
+    pop di
+    pop dx
+    pop cx
     pop bx
     pop ax
     ret
 
-start:
-    mov ax, 0013h
-    int 10h
-    mov ax, 0A000h
-    mov es, ax
-    cld
-    call set_palette
 
+; respawnCar: BX = car number. Puts it back at the far end of the road
+; in the next lane of the repeating pattern.
+respawnCar:
+    push ax
+    push si
+    mov si, bx
+    shl si, 1
+    mov word [car_posy+si], CAR_START_Y
+    mov al, [lane_idx]
+    mov ah, 0
+    mov si, ax
+    mov al, [lane_pattern+si]
+    mov [car_lane+bx], al
+    mov al, [lane_idx]
+    inc al
+    cmp al, PATTERN_LEN
+    jb rc_store
+    mov al, 0
+rc_store:
+    mov [lane_idx], al
+    pop si
+    pop ax
+    ret
+
+
+; moveTraffic: every car comes closer. Near cars move faster (perspective)
+; and the player's speed makes them come faster still.
+moveTraffic:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    mov bx, 0
+mt_next:
+    mov si, bx
+    shl si, 1
+    mov ax, [car_posy+si]
+    mov dx, ax
+    sub dx, 88                  ; rows below the horizon
+    mov cl, 5
+    shr dx, cl                  ; / 32
+    inc dx                      ; DX = at least 1 row per tick
+    mov di, [speed]
+    mov cl, 6
+    shr di, cl                  ; speed / 64
+    add dx, di
+    add ax, dx
+    mov [car_posy+si], ax
+    cmp ax, CAR_GONE_Y
+    jb mt_ok
+    call respawnCar             ; passed the player: start again far away
+mt_ok:
+    inc bx
+    cmp bx, 3
+    jb mt_next
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+
+; placeCars: turns car_lane + car_posy into x, y, w, h for each car struct
+; so that drawBlueCar / drawTealCar / drawGoldCar work unchanged.
+placeCars:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    mov bx, 0
+pc_next:
+    mov si, bx
+    shl si, 1
+    mov di, [car_ptr+si]        ; DI -> x, y, w, h of this car
+    mov ax, [car_posy+si]
+    mov [di+2], ax              ; y
+    shl ax, 1
+    sub ax, 148                 ; AX = road width on this row (2y - 148)
+    mov cx, ax                  ; CX = road width
+    xor dx, dx
+    mov si, 5
+    div si                      ; AX = car width = road / 5
+    mov [di+4], ax              ; w
+    mov dx, ax
+    shl ax, 1
+    add ax, dx                  ; AX = 3w
+    shr ax, 1
+    shr ax, 1                   ; AX = 3w / 4
+    mov [di+6], ax              ; h
+    mov ax, cx
+    xor dx, dx
+    mov si, 3
+    div si                      ; AX = distance from the road centre to a side lane
+    mov dx, [di+4]
+    shr dx, 1                   ; DX = half the car width
+    mov cx, 160                 ; middle lane
+    cmp byte [car_lane+bx], 1
+    je pc_set
+    jb pc_left
+    add cx, ax                  ; right lane
+    jmp pc_set
+pc_left:
+    sub cx, ax                  ; left lane
+pc_set:
+    sub cx, dx
+    mov [di], cx                ; x
+    inc bx
+    cmp bx, 3
+    jae pc_done
+    jmp pc_next
+pc_done:
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+
+; crashHit: BX = car that was hit. Stops the car, takes points away.
+crashHit:
+    push ax
+    mov word [speed], 0
+    mov ax, [score_val]
+    sub ax, CRASH_PENALTY
+    jnc ch_store
+    mov ax, 0                   ; score never goes below 0
+ch_store:
+    mov [score_val], ax
+    mov byte [crash_timer], 12
+    call respawnCar             ; the car we hit disappears
+    pop ax
+    ret
+
+
+; checkCollision: a car in the player's lane that reaches the bonnet is a hit
+checkCollision:
+    push ax
+    push bx
+    push si
+    push di
+    mov bx, 0
+cc_next:
+    mov al, [car_lane+bx]
+    cmp al, [current_lane]
+    jne cc_skip
+    mov si, bx
+    shl si, 1
+    mov di, [car_ptr+si]
+    mov ax, [di+2]              ; y
+    add ax, [di+6]              ; + height = bottom of the car
+    cmp ax, HIT_Y
+    jb cc_skip
+    call crashHit
+cc_skip:
+    inc bx
+    cmp bx, 3
+    jb cc_next
+    pop di
+    pop si
+    pop bx
+    pop ax
+    ret
+
+
+; updateRoadScroll: white dashes move faster when the car is faster
+updateRoadScroll:
+    push ax
+    push cx
+    mov ax, [speed]
+    add ax, 31
+    mov cl, 5
+    shr ax, cl                  ; 0 when stopped, 1..4 when moving
+    add byte [road_scroll], al
+    pop cx
+    pop ax
+    ret
+
+
+; updateDistance: 64 speed units = 1 metre. Every metre gives 1 point.
+updateDistance:
+    push ax
+    mov ax, [speed]
+    add [dist_frac], ax
+ud_loop:
+    cmp word [dist_frac], 64
+    jb ud_done
+    sub word [dist_frac], 64
+    inc word [distance_m]
+    inc word [score_val]
+    cmp word [score_val], 9999
+    jbe ud_loop
+    mov word [score_val], 9999
+    jmp ud_loop
+ud_done:
+    pop ax
+    ret
+
+
+; updateFuel: fuel goes down with the speed (and a little when idling)
+updateFuel:
+    push ax
+    mov ax, [speed]
+    add ax, FUEL_IDLE
+    add [fuel_acc], ax
+    cmp word [fuel_acc], FUEL_DIV
+    jb uf_done
+    sub word [fuel_acc], FUEL_DIV
+    cmp byte [fuel_level], 0
+    je uf_done
+    dec byte [fuel_level]
+uf_done:
+    pop ax
+    ret
+
+
+updateTime:
+    cmp word [time_ticks], 0
+    je ut_done
+    dec word [time_ticks]
+ut_done:
+    ret
+
+
+; updateHud: refreshes the texts and the time bar from the game values
+updateHud:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+
+    mov ax, [speed]             ; speed box: 3 digits
+    mov di, speed_text
+    mov cx, 3
+    call numToText
+
+    mov ax, [distance_m]        ; DIST 0420 / 1000 m
+    mov di, distance_text+5
+    mov cx, 4
+    call numToText
+
+    mov ax, [score_val]         ; SCORE  4793
+    mov di, score_text+7
+    mov cx, 4
+    call numToText
+
+    mov ax, [time_ticks]        ; time bar: red part shrinks from the top
+    xor dx, dx
+    mov bx, TIME_DIV
+    div bx                      ; AX = pixels of time left
+    cmp ax, [time_bar_h]
+    jbe uh_time_ok
+    mov ax, [time_bar_h]
+uh_time_ok:
+    mov [time_left_h], ax
+    mov bx, [time_bar_y]
+    add bx, [time_bar_h]        ; BX = bottom of the bar
+    sub bx, ax
+    mov [time_left_y], bx
+
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+
+; checkEnd: level complete at 1000 m, over when time or fuel is 0
+checkEnd:
+    cmp word [distance_m], GOAL_M
+    jb ce_time
+    mov word [distance_m], GOAL_M
+    mov byte [game_state], 1
+    ret
+ce_time:
+    cmp word [time_ticks], 0
+    jne ce_fuel
+    mov byte [game_state], 2
+    ret
+ce_fuel:
+    cmp byte [fuel_level], 0
+    jne ce_done
+    mov byte [game_state], 3
+ce_done:
+    ret
+
+
+; updateGame: everything Partner B does once per tick
+updateGame:
+    call moveTraffic
+    call placeCars
+    call checkCollision
+    call updateRoadScroll
+    call updateDistance
+    call updateFuel
+    call updateTime
+    call updateHud
+    call checkEnd
+    cmp byte [crash_timer], 0
+    je ug_done
+    dec byte [crash_timer]
+ug_done:
+    ret
+
+
+; drawCrashText: small CRASH box while crash_timer is running
+drawCrashText:
+    push si
+    cmp byte [crash_timer], 0
+    je dct_done
+    mov word [rect_x], 116
+    mov word [rect_y], 44
+    mov word [rect_w], 88
+    mov word [rect_h], 16
+    mov byte [rect_c], 22
+    call drawRect
+    mov byte [text_row], 6
+    mov byte [text_col], 15
+    mov byte [text_colour], 21
+    mov si, crash_text
+    call printStringT
+dct_done:
+    pop si
+    ret
+
+
+; showEndMessage: box in the middle of the screen, text depends on game_state
+showEndMessage:
+    push ax
+    push si
+    push es
+    mov ax, BUF_SEG
+    mov es, ax
+
+    mov word [rect_x], 68
+    mov word [rect_y], 64
+    mov word [rect_w], 176
+    mov word [rect_h], 48
+    mov byte [rect_c], 15
+    call drawRect
+    mov word [rect_x], 69
+    mov word [rect_y], 65
+    mov word [rect_w], 174
+    mov word [rect_h], 46
+    mov byte [rect_c], 22
+    call drawRect
+
+    mov si, msg_win
+    mov byte [text_colour], 26  ; gold for a win
+    cmp byte [game_state], 1
+    je em_print
+    mov byte [text_colour], 21  ; red for a loss
+    mov si, msg_time
+    cmp byte [game_state], 2
+    je em_print
+    mov si, msg_fuel
+em_print:
+    mov byte [text_row], 9
+    mov byte [text_col], 12
+    call printStringT
+
+    mov byte [text_row], 11
+    mov byte [text_col], 13
+    mov byte [text_colour], 15
+    mov si, msg_key
+    call printStringT
+
+    call flipScreen
+    pop es
+    pop si
+    pop ax
+    ret
+
+
+; ---- frame handling: everything is drawn in a hidden buffer, then copied ----
+drawScene:
     call drawSky
     call drawGrass
     call drawBuildings
     call drawRoad
-    call drawTraffic
-    call drawCar
+    call drawTraffic            ; cars go after the road, before the bonnet
+    call drawCar                ; bonnet + dashboard
     call drawTime
     call drawDistance
     call drawScore
     call drawFuel
-     call drawSteeringWheel
-
-    call updateSpeedText        ; show 000 at the start instead of 078
     call drawSpeed
+    call drawSteeringWheel
     call drawGear
     call drawLaneArrows
     call drawIndicators
+    call drawCrashText
+    ret
 
-game_loop:
-    mov ah, 1                   ; is a key waiting?
+
+flipScreen:
+    push ax
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+    mov dx, 3DAh                ; wait for the vertical retrace (less flicker)
+fl_w1:
+    in al, dx
+    test al, 8
+    jnz fl_w1
+fl_w2:
+    in al, dx
+    test al, 8
+    jz fl_w2
+    mov ax, BUF_SEG
+    mov ds, ax
+    mov ax, 0A000h
+    mov es, ax
+    xor si, si
+    xor di, di
+    mov cx, 32000
+    cld
+    rep movsw                   ; copy the whole 320 x 200 screen
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop ax
+    ret
+
+
+drawFrame:
+    push ax
+    push es
+    mov ax, BUF_SEG
+    mov es, ax
+    call drawScene
+    call flipScreen
+    pop es
+    pop ax
+    ret
+
+
+; waitTick: one game step per BIOS timer tick (18.2 per second)
+waitTick:
+    push ax
+    push cx
+    push dx
+wt_again:
+    mov ah, 0
+    int 1Ah                     ; CX:DX = tick counter
+    cmp dx, [last_tick]
+    je wt_again
+    mov [last_tick], dx
+    pop dx
+    pop cx
+    pop ax
+    ret
+
+
+flushKeys:
+    push ax
+fk_loop:
+    mov ah, 1
     int 16h
-    jz game_loop
+    jz fk_done
+    mov ah, 0
+    int 16h
+    jmp fk_loop
+fk_done:
+    pop ax
+    ret
+
+
+; ----------------------------------------------------------------------
+; handleInput - PLACEHOLDER so the program runs. Partner A: replace this
+; with your real keyboard / acceleration / braking / lane code.
+; It only has to change [speed] and [current_lane].
+; ----------------------------------------------------------------------
+handleInput:
+    push ax
+hi_next:
+    mov ah, 1
+    int 16h
+    jnz hi_key
+    jmp hi_done
+hi_key:
     mov ah, 0
     int 16h                     ; AH = scan code
-    cmp ah, 01h                 ; Esc
-    je terminate
+    cmp ah, 01h                 ; Esc = quit
+    jne hi_up
+    mov byte [game_state], 4
+    jmp hi_done
+hi_up:
     cmp ah, 48h                 ; Up Arrow
-    je key_up
+    jne hi_space
+    add word [speed], 4
+    cmp word [speed], 120
+    jbe hi_next
+    mov word [speed], 120
+    jmp hi_next
+hi_space:
     cmp ah, 39h                 ; Space
-    je key_brake
-    jmp game_loop               ; any other key: ignore
+    jne hi_left
+    sub word [speed], 8
+    jnc hi_next
+    mov word [speed], 0
+    jmp hi_next
+hi_left:
+    cmp ah, 4Bh                 ; Left Arrow
+    jne hi_right
+    cmp byte [current_lane], 0
+    je hi_next
+    dec byte [current_lane]
+    jmp hi_next
+hi_right:
+    cmp ah, 4Dh                 ; Right Arrow
+    jne hi_next
+    cmp byte [current_lane], 2
+    jae hi_next
+    inc byte [current_lane]
+    jmp hi_next
+hi_done:
+    pop ax
+    ret
 
-key_up:
-    mov al, [speed]
-    add al, 2
-    cmp al, MAX_SPEED
-    jbe up_ok
-    mov al, MAX_SPEED           ; cap at the maximum
-up_ok:
-    mov [speed], al
-    jmp refresh_speed
 
-key_brake:
-    mov al, [speed]
-    cmp al, 4
-    jae brake_sub
-    mov al, 4                   ; so it never goes below 0
-brake_sub:
-    sub al, 4
-    mov [speed], al
+start:
+    mov ax, 0013h
+    int 10h
+    cld
+    call set_palette
 
-refresh_speed:
-    call updateSpeedText
-    call drawSpeed              ; redraw the speed box only when speed changed
-    jmp game_loop
+game_loop:
+    call waitTick
+    call handleInput            ; Partner A
+    call updateGame             ; Partner B
+    call drawFrame
+    cmp byte [game_state], 0
+    je game_loop
+
+    cmp byte [game_state], 4    ; Esc: leave without a message
+    je terminate
+    call showEndMessage
+    call flushKeys
+    mov ah, 0                   ; wait for a key
+    int 16h
 
 terminate:
-    mov ax, 0003h
+    mov ax, 0003h               ; back to text mode
     int 10h
     mov ax, 4C00h
     int 21h
