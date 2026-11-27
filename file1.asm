@@ -109,9 +109,9 @@ teal_car_y: dw 104
 teal_car_w: dw 11
 teal_car_h: dw 9
 
-gold_car_x: dw 156
+gold_car_x: dw 155
 gold_car_y: dw 96
-gold_car_w: dw 8
+gold_car_w: dw 10
 gold_car_h: dw 7
 
 ; ---- shared by the text routine ----
@@ -534,7 +534,7 @@ drawTime:                       ; "Time" label and the time bar
     mov al, [time_text_colour]
     mov [text_colour], al
     mov si, time_text
-    call printString
+    call printStringT
 
     mov ax, [time_bar_x]        ; empty part of the bar
     mov [rect_x], ax
@@ -571,7 +571,7 @@ drawDistance:
     mov al, [distance_colour]
     mov [text_colour], al
     mov si, distance_text
-    call printString
+    call printStringT
     pop si
     pop ax
     ret
@@ -587,7 +587,7 @@ drawScore:
     mov al, [score_colour]
     mov [text_colour], al
     mov si, score_text
-    call printString
+    call printStringT
     pop si
     pop ax
     ret
@@ -602,7 +602,7 @@ drawFuel:
     mov byte [text_col], 25
     mov byte [text_colour], 15
     mov si, fuel_text
-    call printString
+    call printStringT
 
     ; Draw the outer white border
     mov word [rect_x], 204
@@ -633,14 +633,14 @@ drawFuel:
     mov byte [text_col], 25
     mov byte [text_colour], 15
     mov si, fuel_empty_text
-    call printString
+    call printStringT
 
     ; Print F below the bar
     mov byte [text_row], 24
     mov byte [text_col], 30
     mov byte [text_colour], 15
     mov si, fuel_full_text
-    call printString
+    call printStringT
 
     pop si
     pop ax
@@ -954,6 +954,89 @@ right_is_off:
     pop si
     pop ax
     ret
+
+font_off: dw 0
+font_seg: dw 0
+
+; printStringT: like printString, but only the letter pixels are drawn
+; SI = text ending in 0, uses text_row, text_col, text_colour
+printStringT:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push bp
+    push es
+
+    mov ax, 1130h
+    mov bh, 3                   ; ask the BIOS where the 8x8 font is
+    int 10h                     ; ES:BP = font
+    mov [font_off], bp
+    mov [font_seg], es
+    pop es                      ; ES = video memory again
+    push es
+
+    mov cl, 3                   ; shift amount (x8)
+    mov al, [text_row]
+    mov ah, 0
+    shl ax, cl                  ; y = row * 8
+    mov bx, 320
+    mul bx
+    mov di, ax
+    mov al, [text_col]
+    mov ah, 0
+    shl ax, cl                  ; x = col * 8
+    add di, ax                  ; DI = top-left pixel of the first letter
+
+tt_char:
+    lodsb
+    cmp al, 0
+    je tt_done
+    mov ah, 0
+    shl ax, cl
+    mov bx, ax
+    add bx, [font_off]          ; BX = this letter's 8 font bytes
+    push di                     ; remember the letter's start
+    mov dx, 8                   ; 8 rows
+tt_row:
+    push es
+    mov es, [font_seg]
+    mov al, [es:bx]             ; one row of the letter
+    pop es
+    push di                     ; remember the row's start
+    mov cx, 8
+tt_bit:
+    test al, 80h
+    jz tt_skip
+    mov ah, [text_colour]
+    mov [es:di], ah             ; only set pixels are drawn
+tt_skip:
+    shl al, 1
+    inc di
+    loop tt_bit
+    pop di
+    add di, 320                 ; next row
+    inc bx
+    dec dx
+    jnz tt_row
+    pop di
+    add di, 8                   ; next letter
+    mov cl, 3                   ; LOOP used CX, so reset the shift amount
+    jmp tt_char
+
+tt_done:
+    pop es
+    pop bp
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
 start:
     mov ax, 0013h
     int 10h
@@ -976,7 +1059,7 @@ start:
     call drawSteeringWheel
     call drawGear
     call drawLaneArrows
-     call drawIndicators
+    call drawIndicators
 
     mov ah, 0                   ; wait for a key
     int 16h
