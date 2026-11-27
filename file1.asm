@@ -19,6 +19,8 @@ time_left_colour: db 21
 time_bar_empty_colour: db 22
 time_text_colour: db 15
 text_colour: db 0
+speed: db 0                     ; 0 to 120
+MAX_SPEED equ 120
 
 palette_table:
     db 16, 33, 51, 59           ; sky blue
@@ -1037,6 +1039,27 @@ tt_done:
     pop ax
     ret
 
+    updateSpeedText:
+    push ax
+    push bx
+    mov al, [speed]
+    mov ah, 0
+    mov bl, 100
+    div bl                      ; AL = hundreds, AH = remainder
+    add al, '0'
+    mov [speed_text], al
+    mov al, ah
+    mov ah, 0
+    mov bl, 10
+    div bl                      ; AL = tens, AH = ones
+    add al, '0'
+    mov [speed_text+1], al
+    add ah, '0'
+    mov [speed_text+2], ah
+    pop bx
+    pop ax
+    ret
+
 start:
     mov ax, 0013h
     int 10h
@@ -1047,25 +1070,62 @@ start:
 
     call drawSky
     call drawGrass
-     call drawBuildings          ; new
+    call drawBuildings
     call drawRoad
-    call drawTraffic            ; cars go after the road, before the bonnet
-    call drawCar                ; bonnet + dashboard
+    call drawTraffic
+    call drawCar
     call drawTime
     call drawDistance
     call drawScore
     call drawFuel
+     call drawSteeringWheel
+
+    call updateSpeedText        ; show 000 at the start instead of 078
     call drawSpeed
-    call drawSteeringWheel
     call drawGear
     call drawLaneArrows
     call drawIndicators
 
-    mov ah, 0                   ; wait for a key
+game_loop:
+    mov ah, 1                   ; is a key waiting?
     int 16h
+    jz game_loop
+    mov ah, 0
+    int 16h                     ; AH = scan code
+    cmp ah, 01h                 ; Esc
+    je terminate
+    cmp ah, 48h                 ; Up Arrow
+    je key_up
+    cmp ah, 39h                 ; Space
+    je key_brake
+    jmp game_loop               ; any other key: ignore
+
+key_up:
+    mov al, [speed]
+    add al, 2
+    cmp al, MAX_SPEED
+    jbe up_ok
+    mov al, MAX_SPEED           ; cap at the maximum
+up_ok:
+    mov [speed], al
+    jmp refresh_speed
+
+key_brake:
+    mov al, [speed]
+    cmp al, 4
+    jae brake_sub
+    mov al, 4                   ; so it never goes below 0
+brake_sub:
+    sub al, 4
+    mov [speed], al
+
+refresh_speed:
+    call updateSpeedText
+    call drawSpeed              ; redraw the speed box only when speed changed
+    jmp game_loop
 
 terminate:
-    mov ax, 0003h               ; back to text mode
+    mov ax, 0003h
     int 10h
     mov ax, 4C00h
     int 21h
